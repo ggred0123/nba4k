@@ -1,0 +1,38 @@
+# Unity generated files
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+[Mm]emoryCaptures/
+
+# User-specific settings
+UserSettings/
+
+# Crash reports
+*.pidb
+*.pidb.meta
+
+# Unity Cache Server
+.cache/
+
+# Visual Studio / MonoDevelop
+.vscode/
+*.csproj
+*.unityproj
+*.sln
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+
+# OS generated files
+.DS_Store
+Thumbs.db
+
+# Package manager files
+Packages/packages-lock.json
