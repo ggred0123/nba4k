@@ -49,6 +49,8 @@ public class BallDribble : MonoBehaviour
 
     private bool isDribbling = true;
     private bool isMovingToHand = false;
+    private bool shouldReleaseShot = false;  // 추가
+
 
     private ScoreManager scoreManager;
     private bool canScore = true; 
@@ -136,38 +138,50 @@ public class BallDribble : MonoBehaviour
     return newVel;
 }
 
-    void HandleShootInput()
-    {
-        // E키를 누르면 차지 시작
-        if (Input.GetKeyDown(KeyCode.E))
-        {
-            animator.SetBool("IsDribbling", false);
-            StartCharging();
-        }
 
-        // E키를 떼면 슛 발사
-        if (Input.GetKeyUp(KeyCode.E) && isChargingShot)
-        {
-            ShootBall();
-        }
+public void ReleaseShot()
+{
+    Debug.Log("ReleaseShot Called"); // 디버그 로그 추가
+    if(shouldReleaseShot)
+    {
+        Debug.Log("Shooting Ball"); // 디버그 로그 추가
+        ShootBall();
+        shouldReleaseShot = false;
     }
+}
+
+void HandleShootInput()
+{
+    if (Input.GetKeyDown(KeyCode.E) && !isChargingShot)  // !isChargingShot 추가
+    {
+        Debug.Log("E pressed");
+        animator.SetBool("IsShooting", true);
+        StartCharging();
+    }
+
+    if (Input.GetKeyUp(KeyCode.E) && isChargingShot)
+    {
+        Debug.Log("E released, ready to shoot");
+        shouldReleaseShot = true;
+        // 애니메이션이 한 번만 실행되도록
+        isChargingShot = false;
+    }
+}
+
+
     Vector3 CalculateShootDirection(Vector3 targetPos, float force)
-    {
-        Vector3 toHoop = hoopTransform.position - transform.position;
-
-        // 1) 지면 상에서의 회전만 고려 (y=0)
-        Vector3 horizontalDir = new Vector3(toHoop.x, 0, toHoop.z).normalized;
-
-        // 2) 어느 정도 위로 올려칠 각도(또는 높이)
-        float arcOffset = 0.5f; // 혹은 shootArcHeight, distance 등에 따라 동적으로
-        Vector3 upDir = Vector3.up * arcOffset;  // 위로 조금 들어줄 벡터
-
-        // 3) 최종 슛 방향
-        Vector3 finalDir = horizontalDir + upDir;
-        finalDir.Normalize();
-
-        return finalDir;
-    }
+{
+    Vector3 toHoop = hoopTransform.position - transform.position;
+    float distance = Vector3.Distance(transform.position, hoopTransform.position);
+    
+    float heightFactor = Mathf.Clamp(distance / 5f, 1f, 3f);
+    
+    Vector3 horizontalDir = new Vector3(toHoop.x, 0, toHoop.z).normalized;
+    Vector3 upDir = Vector3.up * heightFactor;
+    
+    Vector3 finalDir = (horizontalDir + upDir).normalized;
+    return finalDir;
+}
 
     void OnTriggerEnter(Collider other)
     {
@@ -188,61 +202,88 @@ public class BallDribble : MonoBehaviour
     }
 
     void StartCharging()
+{
+    if (!isChargingShot)
     {
         isChargingShot = true;
         shootChargeStartTime = Time.time;
-    
-    // 드리블 상태 종료
-    isDribbling = false;
-    isMovingToHand = true;
-    ballRigidbody.useGravity = false;
-    
-    // 드리블 애니메이션 종료
-    animator.SetBool("IsDribbling", false);
-    
-    // UI 표시
-    if(powerSlider != null)
-    {
-        powerSlider.gameObject.SetActive(true);
-    }
-    }
-    void ShootBall()
-    {
-        float chargeTime = Mathf.Min(Time.time - shootChargeStartTime, maxChargeTime);
-        float chargePercent = chargeTime / maxChargeTime;
 
-        Vector3 startPos = transform.position;
-        Vector3 targetPos = hoopTransform.position;
-        
-        // 최대 높이 계산
-        float maxYPos = CalcMaxHeight(startPos, targetPos);
-        // 초기 속도 계산
-        Vector3 shootVelocity = CalculateShootVelocity(startPos, targetPos, maxYPos);
-        
-        // 차지에 따른 속도 조절
-        shootVelocity *= Mathf.Lerp(minShootForce, maxShootForce, chargePercent);
+        // 슛 버튼 누르는 즉시 골대를 바라보도록
+        FaceHoop();
 
-        // 발사
-        transform.SetParent(null);
-        ballRigidbody.isKinematic = false;
-        ballRigidbody.useGravity = true;
-        ballRigidbody.linearVelocity = shootVelocity;
-        
-        // 회전 효과
-        ballRigidbody.AddTorque(Random.insideUnitSphere * shootVelocity.magnitude * 0.1f, ForceMode.Impulse);
-
-        // 상태 및 UI 초기화
-        isChargingShot = false;
+        // 드리블 상태 종료
         isDribbling = false;
-        isMovingToHand = false;
+        isMovingToHand = true;
+        ballRigidbody.useGravity = false;
+
+        // 드리블 애니메이션 종료
         animator.SetBool("IsDribbling", false);
-        
+
         if(powerSlider != null)
         {
-            powerSlider.gameObject.SetActive(false);
-            powerSlider.value = 0;
+            powerSlider.gameObject.SetActive(true);
         }
     }
+}
+
+void FaceHoop()
+{
+    if (hoopTransform == null) return;
+
+    // 골대 방향 계산 (Y축 고정)
+    Vector3 directionToHoop = hoopTransform.position - player.position;
+    directionToHoop.y = 0; // 수평 방향만 고려
+
+    // 방향 벡터가 너무 작으면 실행하지 않음
+    if (directionToHoop.sqrMagnitude < 0.01f) return;
+
+    // 목표 Y축 회전 값 계산
+    Quaternion targetRotation = Quaternion.LookRotation(directionToHoop);
+
+    // Y축 회전만 변경 (Freeze Rotation Y는 물리적으로 유지)
+    player.rotation = Quaternion.Euler(
+        player.rotation.eulerAngles.x,     // 기존 X축 값 유지
+        targetRotation.eulerAngles.y,     // 계산된 Y축 값
+        player.rotation.eulerAngles.z     // 기존 Z축 값 유지
+    );
+}
+
+
+  void ShootBall()
+{
+    // 골대 방향으로 회전
+    FaceHoop();
+
+    // 슛 로직
+    float chargeTime = Mathf.Min(Time.time - shootChargeStartTime, maxChargeTime);
+    float chargePercent = chargeTime / maxChargeTime;
+
+    float shootForce = Mathf.Lerp(minShootForce, maxShootForce, chargePercent);
+
+    Vector3 targetPos = hoopTransform.position;
+    Vector3 shootDir = CalculateShootDirection(targetPos, shootForce);
+
+    transform.SetParent(null);
+    ballRigidbody.isKinematic = false;
+    ballRigidbody.useGravity = true;
+    ballRigidbody.linearVelocity = shootDir * shootForce;
+
+    Vector3 rotationAxis = -transform.right; // 회전 효과
+    ballRigidbody.AddTorque(rotationAxis * shootForce * 0.3f, ForceMode.Impulse);
+
+    // 상태 초기화
+    isChargingShot = false;
+    isDribbling = false;
+    isMovingToHand = false;
+    animator.SetBool("IsDribbling", false);
+
+    if (powerSlider != null)
+    {
+        powerSlider.gameObject.SetActive(false);
+        powerSlider.value = 0;
+    }
+}
+
 
     // (선택적) 차지 파워를 시각적으로 표시하는 함수
     public float GetChargePercent()
@@ -255,6 +296,14 @@ public class BallDribble : MonoBehaviour
 
     void Start()
     {
+
+
+        Rigidbody rb = player.GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            rb.angularVelocity = Vector3.zero; // 각속도 초기화
+        }
+
         if (ballRigidbody == null)
             ballRigidbody = GetComponent<Rigidbody>();
 
