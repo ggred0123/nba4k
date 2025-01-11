@@ -203,59 +203,87 @@ void HandleShootInput()
 
     void StartCharging()
 {
-    if (!isChargingShot)  // 이미 차징 중이면 실행하지 않음
+    if (!isChargingShot)
     {
         isChargingShot = true;
         shootChargeStartTime = Time.time;
-        
+
+        // 슛 버튼 누르는 즉시 골대를 바라보도록
+        FaceHoop();
+
         // 드리블 상태 종료
         isDribbling = false;
         isMovingToHand = true;
         ballRigidbody.useGravity = false;
-        
+
         // 드리블 애니메이션 종료
         animator.SetBool("IsDribbling", false);
-        
+
         if(powerSlider != null)
         {
             powerSlider.gameObject.SetActive(true);
         }
     }
 }
-    void ShootBall()
+
+void FaceHoop()
 {
+    if (hoopTransform == null) return;
+
+    // 골대 방향 계산 (Y축 고정)
+    Vector3 directionToHoop = hoopTransform.position - player.position;
+    directionToHoop.y = 0; // 수평 방향만 고려
+
+    // 방향 벡터가 너무 작으면 실행하지 않음
+    if (directionToHoop.sqrMagnitude < 0.01f) return;
+
+    // 목표 Y축 회전 값 계산
+    Quaternion targetRotation = Quaternion.LookRotation(directionToHoop);
+
+    // Y축 회전만 변경 (Freeze Rotation Y는 물리적으로 유지)
+    player.rotation = Quaternion.Euler(
+        player.rotation.eulerAngles.x,     // 기존 X축 값 유지
+        targetRotation.eulerAngles.y,     // 계산된 Y축 값
+        player.rotation.eulerAngles.z     // 기존 Z축 값 유지
+    );
+}
+
+
+  void ShootBall()
+{
+    // 골대 방향으로 회전
+    FaceHoop();
+
+    // 슛 로직
     float chargeTime = Mathf.Min(Time.time - shootChargeStartTime, maxChargeTime);
     float chargePercent = chargeTime / maxChargeTime;
-    
-    
-    float shootForce = Mathf.Lerp(minShootForce, maxShootForce, chargePercent);
 
+    float shootForce = Mathf.Lerp(minShootForce, maxShootForce, chargePercent);
 
     Vector3 targetPos = hoopTransform.position;
     Vector3 shootDir = CalculateShootDirection(targetPos, shootForce);
 
-
-    // 발사
     transform.SetParent(null);
     ballRigidbody.isKinematic = false;
     ballRigidbody.useGravity = true;
     ballRigidbody.linearVelocity = shootDir * shootForce;
-    
-    Vector3 rotationAxis = -transform.right; // 뒤로 회전
+
+    Vector3 rotationAxis = -transform.right; // 회전 효과
     ballRigidbody.AddTorque(rotationAxis * shootForce * 0.3f, ForceMode.Impulse);
 
-    // 상태 및 UI 초기화
+    // 상태 초기화
     isChargingShot = false;
     isDribbling = false;
     isMovingToHand = false;
     animator.SetBool("IsDribbling", false);
-    
-    if(powerSlider != null)
+
+    if (powerSlider != null)
     {
         powerSlider.gameObject.SetActive(false);
         powerSlider.value = 0;
     }
 }
+
 
     // (선택적) 차지 파워를 시각적으로 표시하는 함수
     public float GetChargePercent()
@@ -268,6 +296,14 @@ void HandleShootInput()
 
     void Start()
     {
+
+
+        Rigidbody rb = player.GetComponent<Rigidbody>();
+        if (rb != null)
+        {
+            rb.angularVelocity = Vector3.zero; // 각속도 초기화
+        }
+
         if (ballRigidbody == null)
             ballRigidbody = GetComponent<Rigidbody>();
 
