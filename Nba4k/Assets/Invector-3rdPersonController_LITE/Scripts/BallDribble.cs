@@ -1,4 +1,5 @@
 using UnityEngine;
+using UnityEngine.UI;
 
 public class BallDribble : MonoBehaviour
 {
@@ -29,6 +30,15 @@ public class BallDribble : MonoBehaviour
     [Header("Hand Hold Settings")]
     public float holdBallInHandDuration = 0.3f;  // 손에 붙어 있는 시간(초)
 
+    [Header("Shoot Settings")]
+    public Transform hoopTransform;      // 골대 Transform
+    public float minShootForce = 5f;
+    public float maxShootForce = 15f;
+    public float maxChargeTime = 1.5f;
+    public float shootArcHeight = 2f;
+    private float shootChargeStartTime;  // 슛 차지 시작 시간
+    private bool isChargingShot = false; // 슛 차지 중인지
+
     // 내부 동작 변수
     private CharacterController playerController;
     private Vector3 lastPlayerPosition;
@@ -40,10 +50,208 @@ public class BallDribble : MonoBehaviour
     private bool isDribbling = true;
     private bool isMovingToHand = false;
 
+    private ScoreManager scoreManager;
+    private bool canScore = true; 
+
     private Animator animator;
+
+    [Header("UI")]
+    public Slider powerSlider;  
+
+    [Header("Shoot Trajectory")]
+    private float maxHeightOffset = 0.6f;  // 근거리 슛 시 최고점 보정값
+    private float range;  
 
     // 손 안에 머무는 시간 체크용
     private float holdTimer = 0f; 
+
+     void Update()
+    {
+        // 슛 입력 처리
+        HandleShootInput();
+        UpdatePowerUI();
+    }
+
+     void UpdatePowerUI()
+    {
+        if(powerSlider != null)
+        {
+            if(isChargingShot)
+            {
+                powerSlider.gameObject.SetActive(true);
+                float chargeTime = Mathf.Min(Time.time - shootChargeStartTime, maxChargeTime);
+                powerSlider.value = chargeTime / maxChargeTime;
+            }
+            else
+            {
+                powerSlider.gameObject.SetActive(false);
+                powerSlider.value = 0;
+            }
+        }
+    }
+
+
+    private float CalcMaxHeight(Vector3 startPos, Vector3 targetPos)
+    {
+        // 지면상의 두 점 사이 거리 계산
+        Vector3 direction = new Vector3(targetPos.x, 0f, targetPos.z) - 
+                          new Vector3(startPos.x, 0f, startPos.z);
+        range = direction.magnitude;
+        
+        // 공통 높이 (골대 높이 + 보정값)
+        float maxYPos = targetPos.y + maxHeightOffset;
+        
+        // 45도 각도 유지를 위한 높이 조정
+        if (range / 2f > maxYPos)
+            maxYPos = range / 2f;
+            
+        return maxYPos;
+    }
+
+    private Vector3 CalculateShootVelocity(Vector3 startPos, Vector3 targetPos, float maxYPos)
+{
+    Vector3 newVel = new Vector3();
+
+    // 최고점까지의 시간
+    float timeToMax = Mathf.Sqrt(-2 * (maxYPos - startPos.y) / Physics.gravity.y);
+    // 최고점에서 골인 지점까지의 시간
+    float timeToTargetY = Mathf.Sqrt(-2 * (maxYPos - targetPos.y) / Physics.gravity.y);
+    float totalFlightTime = timeToMax + timeToTargetY;
+
+    // 지면상의 방향과 거리 계산
+    Vector3 direction = new Vector3(targetPos.x, 0f, targetPos.z) - 
+                      new Vector3(startPos.x, 0f, startPos.z);
+    float range = direction.magnitude;  // 여기서 지역 변수로 range 계산
+    Vector3 unitDirection = direction.normalized;
+    
+    // 수평 방향 속도
+    float horizontalVelocityMagnitude = range / totalFlightTime;
+    
+    // 각 축의 속도 계산
+    newVel.x = horizontalVelocityMagnitude * unitDirection.x;
+    newVel.z = horizontalVelocityMagnitude * unitDirection.z;
+    // 수직 방향 속도
+    newVel.y = Mathf.Sqrt(-2.0f * Physics.gravity.y * (maxYPos - startPos.y));
+
+    return newVel;
+}
+
+    void HandleShootInput()
+    {
+        // E키를 누르면 차지 시작
+        if (Input.GetKeyDown(KeyCode.E))
+        {
+            animator.SetBool("IsDribbling", false);
+            StartCharging();
+        }
+
+        // E키를 떼면 슛 발사
+        if (Input.GetKeyUp(KeyCode.E) && isChargingShot)
+        {
+            ShootBall();
+        }
+    }
+    Vector3 CalculateShootDirection(Vector3 targetPos, float force)
+    {
+        Vector3 toHoop = hoopTransform.position - transform.position;
+
+        // 1) 지면 상에서의 회전만 고려 (y=0)
+        Vector3 horizontalDir = new Vector3(toHoop.x, 0, toHoop.z).normalized;
+
+        // 2) 어느 정도 위로 올려칠 각도(또는 높이)
+        float arcOffset = 0.5f; // 혹은 shootArcHeight, distance 등에 따라 동적으로
+        Vector3 upDir = Vector3.up * arcOffset;  // 위로 조금 들어줄 벡터
+
+        // 3) 최종 슛 방향
+        Vector3 finalDir = horizontalDir + upDir;
+        finalDir.Normalize();
+
+        return finalDir;
+    }
+
+    void OnTriggerEnter(Collider other)
+    {
+        if (other.CompareTag("Hoop") && canScore)
+        {
+            Debug.Log("Score!");
+            if(scoreManager != null)
+            {
+                scoreManager.AddScore();
+                canScore = false;
+                Invoke("ResetScoring", 1f); // 1초 후 다시 득점 가능
+            }
+        }
+    }
+    void ResetScoring()
+    {
+        canScore = true;
+    }
+
+    void StartCharging()
+    {
+        isChargingShot = true;
+        shootChargeStartTime = Time.time;
+    
+    // 드리블 상태 종료
+    isDribbling = false;
+    isMovingToHand = true;
+    ballRigidbody.useGravity = false;
+    
+    // 드리블 애니메이션 종료
+    animator.SetBool("IsDribbling", false);
+    
+    // UI 표시
+    if(powerSlider != null)
+    {
+        powerSlider.gameObject.SetActive(true);
+    }
+    }
+    void ShootBall()
+    {
+        float chargeTime = Mathf.Min(Time.time - shootChargeStartTime, maxChargeTime);
+        float chargePercent = chargeTime / maxChargeTime;
+
+        Vector3 startPos = transform.position;
+        Vector3 targetPos = hoopTransform.position;
+        
+        // 최대 높이 계산
+        float maxYPos = CalcMaxHeight(startPos, targetPos);
+        // 초기 속도 계산
+        Vector3 shootVelocity = CalculateShootVelocity(startPos, targetPos, maxYPos);
+        
+        // 차지에 따른 속도 조절
+        shootVelocity *= Mathf.Lerp(minShootForce, maxShootForce, chargePercent);
+
+        // 발사
+        transform.SetParent(null);
+        ballRigidbody.isKinematic = false;
+        ballRigidbody.useGravity = true;
+        ballRigidbody.linearVelocity = shootVelocity;
+        
+        // 회전 효과
+        ballRigidbody.AddTorque(Random.insideUnitSphere * shootVelocity.magnitude * 0.1f, ForceMode.Impulse);
+
+        // 상태 및 UI 초기화
+        isChargingShot = false;
+        isDribbling = false;
+        isMovingToHand = false;
+        animator.SetBool("IsDribbling", false);
+        
+        if(powerSlider != null)
+        {
+            powerSlider.gameObject.SetActive(false);
+            powerSlider.value = 0;
+        }
+    }
+
+    // (선택적) 차지 파워를 시각적으로 표시하는 함수
+    public float GetChargePercent()
+    {
+        if (!isChargingShot) return 0f;
+        float chargeTime = Mathf.Min(Time.time - shootChargeStartTime, maxChargeTime);
+        return chargeTime / maxChargeTime;
+    }
+
 
     void Start()
     {
@@ -53,10 +261,16 @@ public class BallDribble : MonoBehaviour
         playerController = player.GetComponent<CharacterController>();
         lastPlayerPosition = player.position;
         animator = player.GetComponent<Animator>(); // 플레이어에 Animator 있다고 가정
+        scoreManager = FindObjectOfType<ScoreManager>();
 
         // 초기화
         isDribbling = true;
         isMovingToHand = false;
+
+        if(powerSlider != null)
+        {
+            powerSlider.gameObject.SetActive(false);
+        }
     }
 
     void FixedUpdate()
@@ -140,33 +354,31 @@ public class BallDribble : MonoBehaviour
     }
 
     void HandleBallPosition()
+{
+    // 메인 카메라의 방향 가져오기 (y축 제외)
+    Vector3 cameraForward = Camera.main.transform.forward;
+    cameraForward.y = 0f;
+    cameraForward.Normalize();
+
+    // 플레이어의 앞쪽 위치 계산
+    float forwardDistance = maxDistance * 0.7f + (playerSpeed * 0.1f);
+    Vector3 targetPosition = player.position + (cameraForward * forwardDistance);
+    targetPosition.y = transform.position.y;
+
+    // xz 평면상의 거리만 계산
+    float distance = Vector3.Distance(
+        new Vector3(player.position.x, 0, player.position.z),
+        new Vector3(transform.position.x, 0, transform.position.z)
+    );
+
+    // 거리가 너무 멀어졌을 때만 공의 위치 보정
+    if (distance > maxDistance)
     {
-        // 플레이어 앞(전방) + 약간 측면 흔들림
-        float forwardOffset = maxDistance * 0.7f + (playerSpeed * 0.1f);
-        Vector3 targetPosition = player.position + player.forward * forwardOffset;
-        targetPosition.y = transform.position.y; 
-
-        float distance = Vector3.Distance(
-            new Vector3(player.position.x, 0, player.position.z),
-            new Vector3(transform.position.x, 0, transform.position.z)
-        );
-
-        // 너무 멀어지면 Lerp로 보정
-        if (distance > maxDistance)
-        {
-            float lerpSpeed = (playerSpeed > 3f) ? 10f : 5f;
-            Vector3 newPos = Vector3.Lerp(transform.position, targetPosition, Time.fixedDeltaTime * lerpSpeed);
-            ballRigidbody.MovePosition(newPos);
-        }
-
-        // 옆으로 살짝 흔들리는 움직임
-        if (playerSpeed > 0.1f)
-        {
-            float sideOffset = Mathf.Sin(Time.time * playerSpeed) * 0.1f;
-            Vector3 sideMovement = player.right * sideOffset;
-            ballRigidbody.MovePosition(transform.position + sideMovement);
-        }
+        float lerpSpeed = (playerSpeed > 3f) ? 10f : 5f;
+        Vector3 newPos = Vector3.Lerp(transform.position, targetPosition, Time.fixedDeltaTime * lerpSpeed);
+        ballRigidbody.MovePosition(newPos);
     }
+}
 
     void CheckGroundAndBounce()
     {
